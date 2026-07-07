@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:ble_peripheral/ble_peripheral.dart';
-import 'ble_constants.dart';
+import 'package:flutter/services.dart';
 import 'sensor_simulator.dart';
 
 class BleServer {
@@ -10,143 +8,56 @@ class BleServer {
   bool _advertising = false;
   final List<StreamSubscription> _subs = [];
 
+  static const _channel = MethodChannel('com.example.wearable_app/ble_server');
+
   BleServer(this.simulator);
 
   bool get isAdvertising => _advertising;
 
-  Uint8List _intToBytes(int value) {
-    final data = ByteData(4);
-    data.setInt32(0, value, Endian.little);
-    return data.buffer.asUint8List();
-  }
-
-  Uint8List _int16ToBytes(int value) {
-    final data = ByteData(2);
-    data.setInt16(0, value, Endian.little);
-    return data.buffer.asUint8List();
-  }
-
   Future<void> startAdvertising() async {
     try {
-      await BlePeripheral.initialize();
-
-      // Callback: cuando el teléfono se suscribe o desuscribe
-      BlePeripheral.setConnectionStateChangeCallback(
-        (String deviceId, bool connected) {
-          debugPrint('[BleServer] Telefono ${connected ? "conectado" : "desconectado"}: $deviceId');
-        },
-      );
-
-      // Descriptor CCCD requerido para NOTIFY
-      final cccd = BleDescriptor(
-        uuid: '00002902-0000-1000-8000-00805f9b34fb',
-        value: Uint8List.fromList([0, 0]),
-      );
-
-      // Registrar servicio GATT
-      await BlePeripheral.addService(
-        BleService(
-          uuid: BleConstants.serviceUUID,
-          primary: true,
-          characteristics: [
-            BleCharacteristic(
-              uuid: BleConstants.stepsUUID,
-              properties: [
-                CharacteristicProperties.notify.index,
-                CharacteristicProperties.read.index,
-              ],
-              permissions: [
-                AttributePermissions.readable.index,
-              ],
-              value: _intToBytes(0),
-              descriptors: [cccd],
-            ),
-            BleCharacteristic(
-              uuid: BleConstants.heartRateUUID,
-              properties: [
-                CharacteristicProperties.notify.index,
-                CharacteristicProperties.read.index,
-              ],
-              permissions: [
-                AttributePermissions.readable.index,
-              ],
-              value: Uint8List.fromList([72]),
-              descriptors: [cccd],
-            ),
-            BleCharacteristic(
-              uuid: BleConstants.caloriesUUID,
-              properties: [
-                CharacteristicProperties.notify.index,
-                CharacteristicProperties.read.index,
-              ],
-              permissions: [
-                AttributePermissions.readable.index,
-              ],
-              value: _int16ToBytes(0),
-              descriptors: [cccd],
-            ),
-            BleCharacteristic(
-              uuid: BleConstants.statusUUID,
-              properties: [
-                CharacteristicProperties.notify.index,
-                CharacteristicProperties.read.index,
-              ],
-              permissions: [
-                AttributePermissions.readable.index,
-              ],
-              value: Uint8List.fromList(utf8.encode('reposo')),
-              descriptors: [cccd],
-            ),
-          ],
-        ),
-      );
-
-      // Iniciar advertising BLE real
-      await BlePeripheral.startAdvertising(
-        services: [BleConstants.serviceUUID],
-        localName: 'ActivityWearable',
-      );
-
+      // Iniciar servidor GATT nativo en Kotlin
+      await _channel.invokeMethod('startServer');
       _advertising = true;
-      debugPrint('[BleServer] Advertising iniciado. Esperando telefono...');
+      debugPrint('[BleServer] Servidor GATT nativo iniciado');
 
-      // Conectar streams del simulador con notificaciones BLE
+      // Conectar streams del simulador con notificaciones nativas
       _subs.add(simulator.stepsStream.listen((steps) async {
-        await _notify(BleConstants.stepsUUID, _intToBytes(steps));
+        try {
+          await _channel.invokeMethod('notifySteps', {'value': steps});
+        } catch (e) {
+          debugPrint('[BleServer] Error notifySteps: $e');
+        }
       }));
 
       _subs.add(simulator.heartRateStream.listen((bpm) async {
-        await _notify(
-            BleConstants.heartRateUUID, Uint8List.fromList([bpm]));
+        try {
+          await _channel.invokeMethod('notifyHeartRate', {'value': bpm});
+        } catch (e) {
+          debugPrint('[BleServer] Error notifyHeartRate: $e');
+        }
       }));
 
       _subs.add(simulator.caloriesStream.listen((cal) async {
-        await _notify(BleConstants.caloriesUUID, _int16ToBytes(cal));
+        try {
+          await _channel.invokeMethod('notifyCalories', {'value': cal});
+        } catch (e) {
+          debugPrint('[BleServer] Error notifyCalories: $e');
+        }
       }));
 
       _subs.add(simulator.statusStream.listen((status) async {
-        await _notify(
-          BleConstants.statusUUID,
-          Uint8List.fromList(utf8.encode(status)),
-        );
+        try {
+          await _channel.invokeMethod('notifyStatus', {'value': status});
+        } catch (e) {
+          debugPrint('[BleServer] Error notifyStatus: $e');
+        }
       }));
+
     } catch (e) {
       _advertising = false;
-      debugPrint('[BleServer] Error: $e');
+      debugPrint('[BleServer] Error iniciando servidor: $e');
       rethrow;
-    }
-  }
-
-  Future<void> _notify(String characteristicUuid, Uint8List value) async {
-    if (!_advertising) return;
-    try {
-      // API correcta en v2.4.0
-      await BlePeripheral.updateCharacteristic(
-        characteristicId: characteristicUuid,
-        value: value,
-      );
-    } catch (e) {
-      debugPrint('[BleServer] Error notificando $characteristicUuid: $e');
     }
   }
 
@@ -157,8 +68,10 @@ class BleServer {
     }
     _subs.clear();
     try {
-      await BlePeripheral.stopAdvertising();
-    } catch (_) {}
+      await _channel.invokeMethod('stopServer');
+    } catch (e) {
+      debugPrint('[BleServer] Error deteniendo servidor: $e');
+    }
     simulator.stop();
   }
 }

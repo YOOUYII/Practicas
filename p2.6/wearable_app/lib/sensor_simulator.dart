@@ -30,6 +30,21 @@ class SensorSimulator {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _update());
   }
 
+  // stop() SOLO cancela el timer, NO cierra streams
+  void stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  // dispose() cierra los streams al final de todo
+  void dispose() {
+    _timer?.cancel();
+    _stepsCtrl.close();
+    _heartRateCtrl.close();
+    _caloriesCtrl.close();
+    _statusCtrl.close();
+  }
+
   void _update() {
     if (_random.nextInt(30) == 0) _changeActivity();
 
@@ -40,7 +55,7 @@ class SensorSimulator {
     }
 
     final target = _status == 'corriendo' ? 145
-                  : _status == 'caminando' ? 95 : 72;
+                : _status == 'caminando' ? 95 : 72;
     _heartRate += (_random.nextInt(7) - 3);
     _heartRate  = _heartRate.clamp(target - 10, target + 10);
 
@@ -55,13 +70,5 @@ class SensorSimulator {
   void _changeActivity() {
     const activities = ['reposo', 'caminando', 'corriendo'];
     _status = activities[_random.nextInt(activities.length)];
-  }
-
-  void stop() {
-    _timer?.cancel();
-    _stepsCtrl.close();
-    _heartRateCtrl.close();
-    _caloriesCtrl.close();
-    _statusCtrl.close();
   }
 }
